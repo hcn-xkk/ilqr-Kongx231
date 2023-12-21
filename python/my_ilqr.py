@@ -209,7 +209,8 @@ class ILQR:
     for ii in range(self.N):
         current_x = x_traj[ii] # Not being used currently
         current_u = u_traj[ii].flatten()
-        current_cost = current_x.T @ np.diag(self.Q) @ current_x + current_u.T @ np.diag(self.R) @ current_u
+        current_cost = (current_x - self.target_x).T @ np.diag(self.Q) @ (current_x - self.target_x)\
+                         + current_u.T @ np.diag(self.R) @ current_u
         total_cost = total_cost+current_cost
     # Compute terminal cost
     terminal_difference = (self.target_x - x_traj[-1]).flatten()

@@ -1,4 +1,6 @@
 from symbolic_dynamics import symbolic_cart_pole
+from cost_base import CostFunctionBase
+from dynamics_base import DynamicsBase
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -23,6 +25,10 @@ class DynamicsSymbolic:
     """ This is the continuous time nonlinear dynamics. """
     return self.fd(z, u, dT, self.par)
 
+# @title ILQR Solver
+
+from typing import Callable
+
 class ILQR:
   """
   iLQR steps:
@@ -31,83 +37,79 @@ class ILQR:
       Given Ad, Bd, list[Qd], list[Rd], Qf, calculate list[k1], list[k2], such that du = k1 + k2 * dx
     forward:
       rollout along time sequence, given du = k1 + k2 * dx, rollout the new x_traj and use it as x_ref in the next iteration.
-
-  Consider problem:
-  min_u sum( l(xn, un) ) + lf(xN, uN)
-  lf(xN, uN) = Q1 * x_dot**2 + Q2 * x**2 + Q3 * theta_dot**2 + Q4 * (theta-pi)**2
-  l(xn, un) = Q1 * x_dot**2 + Q2 * x**2 + Q3 * theta_dot**2 + Q4 * (theta-pi)**2 + R * u**2
-  Vx[n] below means delta_V / delta_x at location x_ref[n], this is coefficient for delta_x[n]
   """
+
+  # Problem Setup
+  costs: CostFunctionBase
+  dyn: DynamicsBase
+  dT: float
+  N: int # horizon of the LQR
+
+  # Initial condition
+  x_init: np.array
+
+  # Solution containers
   x_traj: list # length N
   u_traj: list # length N+1
-  x_init: np.array
+
+  # for convenience
   Nx: int
   Nu: int
-  dyn: DynamicsSymbolic
-  Q: list
-  R: float
-  N: int # horizon of the LQR
-  dT: float
 
-  target_x = np.array([0.0,0.0,0.0,np.pi])
-
-  expected_cost_reduction: float
-  expected_cost_reduction_: float
-  expected_cost_reduction_hess_: float
+  expected_cost_reduction: float = 0
+  expected_cost_reduction_: float = 0
+  expected_cost_reduction_hess_: float = 0
 
   debug_on = False
 
-  def __init__(self, x_init, dT, u_traj, Q=[1.0, 0.0, 1.0, 1.0], R=1, Qf=[1.0, 0.0, 1.0, 1.0]):
-    self.dyn = DynamicsSymbolic()
+
+  def __init__(self, dyn, costs, x_init, dT, u_traj):
+    self.dyn = dyn
+    self.costs = costs
+    self.dT = dT
+    self.N = len(u_traj)
+
+    self.x_init = x_init
+    self.x_traj = [x_init]
+    self.u_traj = u_traj
+
     self.Nx = x_init.shape[0]
     self.Nu = u_traj[0].shape[0]
-    self.dT = dT
-    # Q, Qf, R are tunned for discrete system dynamics with dT
-    self.Q = Q
-    self.R = np.array(R)
-    self.Qf = Qf
-    self.N = len(u_traj)
-    self.u_traj = u_traj
-    self.x_traj = [x_init]
+
+    # rollout
+    self.x_traj = self.rollout(x_init, self.u_traj, self.dT)
+
+
+  def rollout(self, x0, u_traj, dt):
+    self.x_traj = [x0] * (self.N+1)
+
     for i in range(self.N):
-      x_next = self.dyn.CalcXNext(self.x_traj[i], self.u_traj[i], self.dT).flatten()
-      self.x_traj.append(x_next)
+      x_next = self.dyn.CalcXNext(self.x_traj[i], self.u_traj[i], self.dT)
+      self.x_traj[i+1] = x_next
+    return self.x_traj
+
 
   def __get_l_derivatives(self, x_ref, u_ref):
     """
     Derivative terms up to 2nd order for running cost l(xn, un)
     """
-    lx = 2*np.diag(self.Q) @ (x_ref - self.target_x)
-    lu = np.zeros(self.Nu)
-    lu[0] = 2 * self.R * u_ref[0]
-    lux = np.zeros((self.Nu,self.Nx))
-    lxx = 2 * np.diag(self.Q)
-    luu = np.zeros((self.Nu, self.Nu))
-    luu[0,0] = 2 * self.R
-    if self.debug_on:
-      print("__get_l_derivatives", lx, lu, lux, lxx, luu)
-    return lx, lu, lux, lxx, luu
+    return self.costs.l_x(x_ref,u_ref), self.costs.l_u(x_ref,u_ref), \
+          self.costs.l_ux(x_ref,u_ref), self.costs.l_xx(x_ref,u_ref), self.costs.l_uu(x_ref,u_ref)
+
 
   def __get_V_terminal_derivatives(self, xN):
-    Vx_N = np.zeros(xN.shape)
-    Vx_N[0] = 2 * self.Qf[0] * xN[0]
-    Vx_N[1] = 2 * self.Qf[1] * xN[1]
-    Vx_N[2] = 2 * self.Qf[2] * xN[2]
-    Vx_N[3] = 2 * self.Qf[3] * (xN[3] - np.pi)
-    Vxx_N = 2 * np.diag(self.Qf)
-    return Vx_N, Vxx_N
+    return self.costs.lf_x(xN), self.costs.lf_xx(xN)
 
 
   def __get_q_derivatives(self, x_ref, u_ref, Vx_nplus1, Vxx_nplus1):
     lx, lu, lux, lxx, luu = self.__get_l_derivatives(x_ref, u_ref)
     Ad, Bd = self.dyn.DiscreteTimeLinearize(x_ref, u_ref, self.dT)
-    # Bd = Bd.flatten
     if self.debug_on:
       print("Ad", Ad)
       print("Bd", Bd)
 
     Qx = lx + Ad.T @ (Vx_nplus1)
-    Qu = lu + (Bd.T @ (Vx_nplus1)).flatten()
+    Qu = lu + (Bd.T @ (Vx_nplus1))
     Qxx = lxx + Ad.T @ (Vxx_nplus1) @ Ad
     Qux = lux + Bd.T @ (Vxx_nplus1) @ Ad
     Quu = luu + Bd.T @ Vxx_nplus1 @ Bd
@@ -131,8 +133,8 @@ class ILQR:
 
 
   def __update_v_derivatives(self, Q_x, Q_u, Q_xx, Q_ux, Q_uu, k1, k2):
-    V_x = np.zeros(Q_x.shape)
-    V_xx = np.zeros(Q_xx.shape)
+    # V_x = np.zeros(Q_x.shape)
+    # V_xx = np.zeros(Q_xx.shape)
     V_x = Q_x + k2.T.dot(Q_u) + Q_ux.T.dot(k1) + k2.T @ Q_uu @ k1
     V_xx = Q_xx + 2*k2.T.dot(Q_ux) + (k2.T.dot(Q_uu)).dot(k2)
     return V_x, V_xx
@@ -206,22 +208,21 @@ class ILQR:
   def compute_cost(self,x_traj,u_traj):
     # Initialize cost
     total_cost = 0.0
+    # Stage cost
     for ii in range(self.N):
         current_x = x_traj[ii] # Not being used currently
         current_u = u_traj[ii].flatten()
-        current_cost = (current_x - self.target_x).T @ np.diag(self.Q) @ (current_x - self.target_x)\
-                         + current_u.T @ np.diag(self.R) @ current_u
-        total_cost = total_cost+current_cost
+        current_cost = self.costs.l(current_x, current_u)
+        total_cost += current_cost
     # Compute terminal cost
-    terminal_difference = (self.target_x - x_traj[-1]).flatten()
-    terminal_cost = terminal_difference.T@np.diag(self.Qf)@terminal_difference
-    total_cost = total_cost+terminal_cost
+    terminal_cost = self.costs.lf(current_x)
+    total_cost += terminal_cost
     return total_cost
 
 
   def run(self, n_iter = 50):
     armijo_threshold = 0.1
-    
+
     current_cost = self.compute_cost(self.x_traj, self.u_traj)
     for iter in range(n_iter):
       learning_rate = 1
@@ -266,3 +267,4 @@ class ILQR:
     ax[1].legend()
     ax[1].grid()
     fig.show()
+

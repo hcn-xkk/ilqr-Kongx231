@@ -1,4 +1,4 @@
-from cost_base import CostFunctionBase
+from formulator.cost_base import CostFunctionBase
 
 import numpy as np
 from typing import Callable

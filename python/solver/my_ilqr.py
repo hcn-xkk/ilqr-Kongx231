@@ -1,6 +1,7 @@
-from symbolic_dynamics import symbolic_cart_pole
-from cost_base import CostFunctionBase
-from dynamics_base import DynamicsBase
+from common.symbolic_dynamics import symbolic_cart_pole
+from formulator.cost_base import CostFunctionBase
+from formulator.dynamics_base import DynamicsBase
+
 import numpy as np
 import matplotlib.pyplot as plt
 

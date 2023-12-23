@@ -1,16 +1,17 @@
-from my_ilqr import ILQR
-from cost_function import CostTrackTarget
-from dynamics_base import DynamicsBase
-from animate import animate_cart_pole
-
 import sys
+sys.path.insert(0, '..')
+
+from solver.my_ilqr import ILQR
+from formulator.cost_function import CostTrackTarget
+from formulator.dynamics_base import DynamicsBase
+from common.animate import animate_cart_pole
+from common.symbolic_dynamics import symbolic_cart_pole
+
 import numpy as np
 import matplotlib.animation as animation
 
 
 # @title  Dynamics Instance
-from symbolic_dynamics import symbolic_cart_pole
-
 class DynamicsCartPole(DynamicsBase):
   def __init__(self, parameters) -> None:
     self.par = parameters

@@ -1,33 +1,25 @@
-# @title Formulate cost function and jacobians/hessians
+from cost_base import CostFunctionBase
+
 import numpy as np
 from typing import Callable
 
-class CostFunction:
+class CostTrackTarget(CostFunctionBase):
   """
-  Consider cost function being:
-    min_u sum( l(xn, un) ) + lf(xN)
+  Consider cost function as tracking a target state with quadratic cost:
+  l(x, u) = (x-x_target)^T * Q * (x-x_target) + u.T * R * u
+  lf(xN) = (xN-x_target)^T * Qf * (xN-x_target)
   """
-  l: Callable[[np.array, np.array], float] # stage cost l(x,u)
-  lf: Callable[[np.array], float] # terminal cost lf(xN)
+  
+  _Q: np.array
+  _Qf: np.array
+  _R: np.array
+  _target_x: np.array
 
-  l_x: Callable[[np.array, np.array], np.array] # alpha_l / alpha_x 1d array, shape (Nx,)
-  l_u: Callable[[np.array, np.array], np.array] # alpha_l / alpha_u, 1d array, shape (Nu,)
-  l_xx: Callable[[np.array, np.array], np.array] # alpha^2_l / alpha_x^2 2d array, shape (Nx, Nx)
-  l_ux: Callable[[np.array, np.array], np.array] # alpha^2_l / alpha_x^2 2d array, shape (Nu, Nx)
-  l_uu: Callable[[np.array, np.array], np.array] # alpha^2_l / alpha_x^2 2d array, shape (Nu, Nu)
-
-  lf_x: Callable[[np.array, np.array], np.array] # alpha_lf / alpha_x 1d array, shape (Nx,)
-  lf_xx: Callable[[np.array, np.array], np.array] # alpha^2_lf / alpha_x^2 1d array, shape (Nx, Nx)
-
-  _Q = np.identity(4) * 0.0
-  _Qf = np.diag([10.0, 0.0, 100.0, 50.0])
-  _R = np.identity(1) * 0.001
-  _target_x = np.array([0.0,0.0,0.0,np.pi])
-
-  def __init__(self, Q: np.array, R:np.array, Qf:np.array) -> None:
+  def __init__(self, Q: np.array, R:np.array, Qf:np.array, target_x) -> None:
     self._Q = Q
     self._R = R
     self._Qf = Qf
+    self._target_x = target_x
 
     self.l = lambda x, u: (x - self._target_x).T @ self._Q @ (x - self._target_x)\
                          + u.T @ self._R @ u

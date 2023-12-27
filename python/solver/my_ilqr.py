@@ -62,9 +62,7 @@ class ILQR:
   Nx: int
   Nu: int
 
-  expected_cost_reduction: float = 0
-  expected_cost_reduction_: float = 0
-  expected_cost_reduction_hess_: float = 0
+  regu_list: list = []
 
   debug_on = False
 
@@ -227,6 +225,7 @@ class ILQR:
     current_cost = self.compute_cost(self.x_traj, self.u_traj)
     regu = self.regu_init
     for iter in range(n_iter):
+      self.regu_list.append(regu)
       k1_list, k2_list, expected_cost_reduction = self.backward(regu)
 
       if (expected_cost_reduction < 0.001):

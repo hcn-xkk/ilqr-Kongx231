@@ -48,6 +48,11 @@ class ILQR:
 
   # Initial condition
   x_init: np.array
+  regu_init: float = 1.0
+  regu_rate: float = 0.7
+  regu_min: float = 0.01
+  regu_max: float = 100
+
 
   # Solution containers
   x_traj: list # length N
@@ -57,9 +62,7 @@ class ILQR:
   Nx: int
   Nu: int
 
-  expected_cost_reduction: float = 0
-  expected_cost_reduction_: float = 0
-  expected_cost_reduction_hess_: float = 0
+  regu_list: list = []
 
   debug_on = False
 
@@ -102,7 +105,7 @@ class ILQR:
     return self.costs.lf_x(xN), self.costs.lf_xx(xN)
 
 
-  def __get_q_derivatives(self, x_ref, u_ref, Vx_nplus1, Vxx_nplus1):
+  def __get_q_derivatives(self, x_ref, u_ref, Vx_nplus1, Vxx_nplus1, regu):
     lx, lu, lux, lxx, luu = self.__get_l_derivatives(x_ref, u_ref)
     Ad, Bd = self.dyn.DiscreteTimeLinearize(x_ref, u_ref, self.dT)
     if self.debug_on:
@@ -113,7 +116,7 @@ class ILQR:
     Qu = lu + (Bd.T @ (Vx_nplus1))
     Qxx = lxx + Ad.T @ (Vxx_nplus1) @ Ad
     Qux = lux + Bd.T @ (Vxx_nplus1) @ Ad
-    Quu = luu + Bd.T @ Vxx_nplus1 @ Bd
+    Quu = luu + Bd.T @ Vxx_nplus1 @ Bd + np.identity(self.Nu) * regu
     if self.debug_on:
       print("__get_q_derivatives", Qx, Qu, Qxx, Qux, Quu)
     return Qx, Qu, Qxx, Qux, Quu
@@ -141,7 +144,7 @@ class ILQR:
     return V_x, V_xx
 
 
-  def forward(self, k1_list, k2_list, learning_rate) -> None:
+  def forward(self, k1_list, k2_list) -> None:
     # update x_traj and u_traj
     delta_x = np.zeros((self.Nx, 1))
     x_traj_new = [x for x in self.x_traj]
@@ -153,7 +156,7 @@ class ILQR:
         print("delta_x",delta_x)
         print("self.u_traj[i]",self.u_traj[i])
 
-      delta_u = k1_list[i] * learning_rate + k2_list[i].flatten() @ delta_x.flatten()
+      delta_u = k1_list[i] + k2_list[i].flatten() @ delta_x.flatten()
       if self.debug_on:
         print("delta_u",delta_u)
       u_traj_new[i] = delta_u + self.u_traj[i]
@@ -163,7 +166,7 @@ class ILQR:
     return x_traj_new, u_traj_new
 
 
-  def backward(self) -> tuple:
+  def backward(self, regu) -> tuple:
     # create containers:
     k1_list,k2_list = [np.zeros((self.Nu,self.Nu)) for _ in range(self.N)],[np.zeros((self.Nu,self.Nx)) for _ in range(self.N)]
     Vx_list = [np.zeros((self.Nx,1)) for _ in range(self.N+1)]
@@ -182,7 +185,7 @@ class ILQR:
       print("Vxx_list[self.N]",Vxx_list[self.N])
 
     for n in reversed(range(self.N)):
-      Qx, Qu, Qxx, Qux, Quu = self.__get_q_derivatives(self.x_traj[n], self.u_traj[n], Vx_list[n+1], Vxx_list[n+1])
+      Qx, Qu, Qxx, Qux, Quu = self.__get_q_derivatives(self.x_traj[n], self.u_traj[n], Vx_list[n+1], Vxx_list[n+1], regu)
       k1, k2 = self.__solveGains(Qx, Qu, Qxx, Qux, Quu)
       Vx_list[n], Vxx_list[n] = self.__update_v_derivatives(Qx, Qu, Qxx, Qux, Quu, k1, k2)
 
@@ -200,10 +203,7 @@ class ILQR:
       k2_list[n] = k2
 
     # Store expected cost reductions
-    self.expected_cost_reduction_grad_ = expected_cost_reduction_grad
-    self.expected_cost_reduction_hess_ = expected_cost_reduction_hess
-    self.expected_cost_reduction_ = expected_cost_reduction
-    return k1_list, k2_list
+    return k1_list, k2_list, expected_cost_reduction
 
 
   def compute_cost(self,x_traj,u_traj):
@@ -222,37 +222,32 @@ class ILQR:
 
 
   def run(self, n_iter = 50):
-    armijo_threshold = 0.1
-
     current_cost = self.compute_cost(self.x_traj, self.u_traj)
+    regu = self.regu_init
     for iter in range(n_iter):
-      learning_rate = 1
-      k1_list, k2_list = self.backward()
-      print('Initial expected cost reduction: ',self.expected_cost_reduction_)
+      self.regu_list.append(regu)
+      k1_list, k2_list, expected_cost_reduction = self.backward(regu)
 
-      if (self.expected_cost_reduction_ < 0.001):
-        print("Stopping optimization, optimal trajectory")
-        break
+      if (expected_cost_reduction < 0.001):
+        print("Stopping optimization, expected cost reduction too small, optimal trajectory")
+      
+      x_traj, u_traj = self.forward(k1_list, k2_list)
+      new_cost = self.compute_cost(x_traj, u_traj)
+      print("Iteration: ", iter, "expected_cost_redu, ", expected_cost_reduction, "new_cost", new_cost, "current_cost", current_cost)
 
-      print('Starting iteration: ',iter,', Current cost: ',current_cost)
-      while learning_rate > 0.05:
-        x_traj, u_traj = self.forward(k1_list, k2_list, learning_rate)
-        new_cost = self.compute_cost(x_traj, u_traj)
-        expected_cost_redu = learning_rate*self.expected_cost_reduction_grad_ + learning_rate*learning_rate*self.expected_cost_reduction_hess_
-        # print("expected_cost_redu, ", expected_cost_redu, "new_cost", new_cost, "current_cost", current_cost)
-        if (current_cost - new_cost)/expected_cost_redu > armijo_threshold:
-          current_cost = new_cost
-          self.x_traj = x_traj
-          self.u_traj = u_traj
-          break
-        else:
-          learning_rate = 0.95 * learning_rate
-      if (learning_rate < 0.05):
-        print("Stopping optimization, low learning rate")
+      if abs(new_cost - current_cost) < 0.001:
+        print("Stopping optimization, cost reduction too small, optimal trajectory")
         break
-      self.expected_cost_reduction_ = expected_cost_redu
-      print("expected_cost_redu, ", expected_cost_redu, "new_cost", new_cost, "current_cost", current_cost)
-    return
+      elif new_cost > current_cost:
+        # reduce step size by increasing regularization (less aggresive)
+        regu = regu / self.regu_rate
+      else:
+        # go to next step and reduce regularization (more aggresive)
+        regu = regu * self.regu_rate
+        current_cost = new_cost
+        self.x_traj = x_traj
+        self.u_traj = u_traj
+      regu = max(min(self.regu_max, regu), self.regu_min)
 
 
   def plot(self):

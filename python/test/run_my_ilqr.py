@@ -42,13 +42,13 @@ elif example_id == 2:
 
   Q = np.identity(4) * 0.0
   Qf = np.diag([10.0, 0.0, 100.0, 30.0])
-  R = np.identity(1) * 0.001
+  R = np.identity(1) * 0.01
   target_state = np.array([0.0,0.0,0.0,np.pi])
 
-  dyn = DynamicsCartPole(np.array([0.1, 0.5, 9.8, 0.3]))
+  dyn = DynamicsCartPole(np.array([0.2, 0.5, 9.8, 0.3]))
   costs = CostTrackTarget(Q, R, Qf, target_state)
   init_state = np.zeros(4)
-  initial_guess = [np.ones(1)*0.01 for _ in range(N)]
+  initial_guess = [np.ones(1)*0.1 for _ in range(N)]
 
 else:
   print('Please provide example id.')

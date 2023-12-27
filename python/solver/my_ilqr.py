@@ -228,32 +228,27 @@ class ILQR:
     regu = self.regu_init
     for iter in range(n_iter):
       k1_list, k2_list, expected_cost_reduction = self.backward(regu)
-      # print('Initial expected cost reduction: ', expected_cost_reduction)
 
       if (expected_cost_reduction < 0.001):
         print("Stopping optimization, expected cost reduction too small, optimal trajectory")
-        # break
       
       x_traj, u_traj = self.forward(k1_list, k2_list)
       new_cost = self.compute_cost(x_traj, u_traj)
-      print("iteration: ", iter, "expected_cost_redu, ", expected_cost_reduction, "new_cost", new_cost, "current_cost", current_cost)
+      print("Iteration: ", iter, "expected_cost_redu, ", expected_cost_reduction, "new_cost", new_cost, "current_cost", current_cost)
 
       if abs(new_cost - current_cost) < 0.001:
         print("Stopping optimization, cost reduction too small, optimal trajectory")
         break
       elif new_cost > current_cost:
-        # reduce step size by increasing regularization
+        # reduce step size by increasing regularization (less aggresive)
         regu = regu / self.regu_rate
       else:
-        # go to next step and reduce regularization
+        # go to next step and reduce regularization (more aggresive)
         regu = regu * self.regu_rate
         current_cost = new_cost
         self.x_traj = x_traj
         self.u_traj = u_traj
       regu = max(min(self.regu_max, regu), self.regu_min)
-      print("Stopping optimization, low learning rate")
-
-    return
 
 
   def plot(self):
